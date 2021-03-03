@@ -337,8 +337,30 @@ bool DataChannel::checkEqual(const InfoObjectCommon& other, bool similar) const
 
 //EventChannel
 EventChannel::EventChannel(EventChannelTypes type, unsigned int nChannels, unsigned int dataLength, float sampleRate, GenericProcessor* source, uint16 subproc)
-	: InfoObjectCommon(source->eventChannelCount++, source->eventChannelTypeCount[type]++, sampleRate, source, subproc),
-		m_type(type)
+	: InfoObjectCommon(source->eventChannelCount++, source->eventChannelTypeCount[type]++, 
+	((sampleRate > 0) ? sampleRate : (source->isGeneratesTimestamps() ? source->getSampleRate(subproc) : CoreServices::getGlobalSampleRate())),
+	source, subproc),
+	m_type(type),
+	m_timestampOrigin(source->isGeneratesTimestamps() ? timestampsFromContinuousSource : timestampsFromGlobalSource ),
+	m_timestampOriginProcessor(source->isGeneratesTimestamps() ? source->getNodeId() : 
+		GenericProcessor::getNodeIdFromFullId(CoreServices::getGlobalTimestampSourceFullId())),
+		m_timestampOriginSubProcessor(source->isGeneratesTimestamps() ? subproc:
+		GenericProcessor::getSubProcessorFromFullId(CoreServices::getGlobalTimestampSourceFullId()))
+{
+	initializeEvent(nChannels, dataLength);
+}
+
+EventChannel::EventChannel(EventChannelTypes type, unsigned int nChannels, unsigned int dataLength, const DataChannel* originChannel, GenericProcessor* source, uint16 subproc)
+	: InfoObjectCommon(source->eventChannelCount++, source->eventChannelTypeCount[type]++, originChannel->getSampleRate(), source, subproc),
+	m_type(type),
+	m_timestampOrigin(timestampsDerivedFromChannel),
+	m_timestampOriginProcessor(originChannel->getSourceNodeID()),
+	m_timestampOriginSubProcessor(originChannel->getSubProcessorIdx())
+{
+	initializeEvent(nChannels, dataLength);
+}
+
+void EventChannel::initializeEvent(int nChannels, int dataLength)
 {
 	m_numChannels = nChannels;
 	if (m_type == TTL)
@@ -407,6 +429,8 @@ size_t EventChannel::getTypeByteSize(EventChannel::EventChannelTypes type)
 	case UINT32_ARRAY: return sizeof(uint32);
 	case INT64_ARRAY: return sizeof(int64);
 	case UINT64_ARRAY: return sizeof(uint64);
+	case FLOAT_ARRAY: return sizeof(float);
+	case DOUBLE_ARRAY: return sizeof(double);
 	default: return sizeof(char);
 	}
 }
@@ -426,6 +450,8 @@ void EventChannel::setDefaultNameAndDescription()
 	case UINT32_ARRAY: name = "UINT32"; break;
 	case INT64_ARRAY: name = "INT64"; break;
 	case UINT64_ARRAY: name = "UINT64"; break;
+	case FLOAT_ARRAY: name = "FLOAT"; break;
+	case DOUBLE_ARRAY: name = "DOUBLE"; break;
 	default: 
 		setName("INVALID");
 		setDescription("Invalid channel");
@@ -504,6 +530,21 @@ bool EventChannel::checkEqual(const InfoObjectCommon& other, bool similar) const
 	if (similar && !hasSimilarEventMetadata(o)) return false;
 	if (!similar && !hasSameEventMetadata(o)) return false;
 	return true;
+}
+
+EventChannel::EventTimestampOrigin EventChannel::getTimestampOrigin() const
+{
+	return m_timestampOrigin;
+}
+
+uint16 EventChannel::getTimestampOriginProcessor() const
+{
+	return m_timestampOriginProcessor;
+}
+
+uint16 EventChannel::getTimestampOriginSubProcessor() const
+{
+	return m_timestampOriginSubProcessor;
 }
 
 //SpikeChannel

@@ -24,8 +24,8 @@
 #ifndef EVENTQUEUE_H_INCLUDED
 #define EVENTQUEUE_H_INCLUDED
 
-#include "../../../JuceLibraryCode/JuceHeader.h"
-#include "../Events/Events.h"
+#include <JuceHeader.h>
+//#include <Events.h>
 #include <vector>
 
 template <class MsgContainer>

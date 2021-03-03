@@ -25,7 +25,9 @@
 #include "FileReaderEditor.h"
 #include <stdio.h>
 #include "../../AccessClass.h"
+#include "../../Audio/AudioComponent.h"
 #include "../PluginManager/PluginManager.h"
+#include "BinaryFileSource/BinaryFileSource.h"
 
 
 FileReader::FileReader()
@@ -41,11 +43,14 @@ FileReader::FileReader()
     , counter               (0)
     , bufferCacheWindow     (0)
     , m_shouldFillBackBuffer(false)
+	, m_bufferSize(1024)
+	, m_sysSampleRate(44100)
 {
     setProcessorType (PROCESSOR_TYPE_SOURCE);
 
     setEnabledState (false);
 
+	//Load pluIn file Sources
     const int numFileSources = AccessClass::getPluginManager()->getNumFileSources();
     for (int i = 0; i < numFileSources; ++i)
     {
@@ -60,6 +65,21 @@ FileReader::FileReader()
             supportedExtensions.set (extensions[j].toLowerCase(), i + 1);
         }
     }
+
+	//Load Built-in file Sources
+	const int numBuiltInFileSources = getNumBuiltInFileSources();
+	for (int i = 0; i < numBuiltInFileSources; ++i)
+	{
+		StringArray extensions;
+		extensions.addTokens(getBuiltInFileSourceExtensions(i), ";", "\"");
+
+		const int numExtensions = extensions.size();
+		for (int j = 0; j < numExtensions; ++j)
+		{
+			supportedExtensions.set(extensions[j].toLowerCase(), i + numFileSources + 1);
+		}
+
+	}
 }
 
 
@@ -88,7 +108,7 @@ bool FileReader::isReady()
 {
     if (! input)
     {
-        CoreServices::sendStatusMessage ("No file selected in File Reader.");
+        //CoreServices::sendStatusMessage ("No file selected in File Reader.");
         return false;
     }
     else
@@ -132,6 +152,43 @@ void FileReader::setEnabledState (bool t)
     isEnabled = t;
 }
 
+bool FileReader::enable()
+{
+	timestamp = 0;
+
+	AudioDeviceManager& adm = AccessClass::getAudioComponent()->deviceManager;
+	AudioDeviceManager::AudioDeviceSetup ads;
+	adm.getAudioDeviceSetup(ads);
+	m_sysSampleRate = ads.sampleRate;
+	m_bufferSize = ads.bufferSize;
+	if (m_bufferSize == 0) m_bufferSize = 1024;
+
+	m_samplesPerBuffer.set(m_bufferSize * (getDefaultSampleRate() / m_sysSampleRate));
+
+	bufferA.malloc(currentNumChannels * m_bufferSize * BUFFER_WINDOW_CACHE_SIZE);
+	bufferB.malloc(currentNumChannels * m_bufferSize * BUFFER_WINDOW_CACHE_SIZE);
+
+        // reset stream to beginning
+        input->seekTo (startSample);
+        currentSample = startSample;
+        readAndFillBufferCache(bufferA); // pre-fill the front buffer with a blocking read
+
+	// set the backbuffer so that on the next call to process() we start with bufferA and buffer
+	// cache window id = 0
+	readBuffer = &bufferB;
+	bufferCacheWindow = 0;
+	m_shouldFillBackBuffer.set(false);
+
+	startThread(); // start async file reader thread
+
+	return isEnabled;
+}
+
+bool FileReader::disable()
+{
+	stopThread(100);
+	return true;
+}
 
 bool FileReader::isFileSupported (const String& fileName) const
 {
@@ -161,9 +218,24 @@ bool FileReader::setFile (String fullpath)
 
     if (isExtensionSupported)
     {
-        const int index = supportedExtensions[ext] - 1;
-        Plugin::FileSourceInfo sourceInfo = AccessClass::getPluginManager()->getFileSourceInfo (index);
-        input = sourceInfo.creator();
+        const int index = supportedExtensions[ext] -1 ;
+		const int numPluginFileSources = AccessClass::getPluginManager()->getNumFileSources();
+
+		if (index < numPluginFileSources)
+		{
+			Plugin::FileSourceInfo sourceInfo = AccessClass::getPluginManager()->getFileSourceInfo(index);
+			input = sourceInfo.creator();
+		}
+		else
+		{
+			input = createBuiltInFileSource(index - numPluginFileSources);
+		}
+		if (!input)
+		{
+			std::cerr << "Error creating file source for extension " << ext << std::endl;
+			return false;
+		}
+
     }
     else
     {
@@ -191,18 +263,14 @@ bool FileReader::setFile (String fullpath)
     static_cast<FileReaderEditor*> (getEditor())->populateRecordings (input);
     setActiveRecording (0);
     
-    m_samplesPerBuffer.set(float(BUFFER_SIZE) * (getDefaultSampleRate() / 44100.0f));
-    
-    readAndFillBufferCache(bufferA); // pre-fill the front buffer with a blocking read
-    
-    startThread(); // start async file reader thread
-
     return true;
 }
 
 
 void FileReader::setActiveRecording (int index)
-{    
+{
+    if (!input) { return; }
+
     input->setActiveRecord (index);
 
     currentNumChannels  = input->getActiveNumChannels();
@@ -220,14 +288,9 @@ void FileReader::setActiveRecording (int index)
     }
 
     static_cast<FileReaderEditor*> (getEditor())->setTotalTime (samplesToMilliseconds (currentNumSamples));
+	input->seekTo(startSample);
 
-    bufferA.malloc (currentNumChannels * BUFFER_SIZE * BUFFER_WINDOW_CACHE_SIZE);
-    bufferB.malloc (currentNumChannels * BUFFER_SIZE * BUFFER_WINDOW_CACHE_SIZE);
-    
-    // set the backbuffer so that on the next call to process() we start with bufferA and buffer
-    // cache window id = 0
-    readBuffer = &bufferB;
-    bufferCacheWindow = 0;
+   
 }
 
 
@@ -253,7 +316,7 @@ void FileReader::updateSettings()
 
 void FileReader::process (AudioSampleBuffer& buffer)
 {
-    const int samplesNeededPerBuffer = int (float (buffer.getNumSamples()) * (getDefaultSampleRate() / 44100.0f));
+    const int samplesNeededPerBuffer = int (float (buffer.getNumSamples()) * (getDefaultSampleRate() / m_sysSampleRate));
     m_samplesPerBuffer.set(samplesNeededPerBuffer);
     // FIXME: needs to account for the fact that the ratio might not be an exact
     //        integer value
@@ -273,8 +336,10 @@ void FileReader::process (AudioSampleBuffer& buffer)
                                    samplesNeededPerBuffer);
     }
     
-    timestamp += samplesNeededPerBuffer;
     setTimestampAndSamples(timestamp, samplesNeededPerBuffer);
+	timestamp += samplesNeededPerBuffer;
+
+	static_cast<FileReaderEditor*> (getEditor())->setCurrentTime(samplesToMilliseconds(startSample + timestamp % (stopSample - startSample)));
     
     bufferCacheWindow += 1;
     bufferCacheWindow %= BUFFER_WINDOW_CACHE_SIZE;
@@ -388,4 +453,44 @@ void FileReader::readAndFillBufferCache(HeapBlock<int16> &cacheBuffer)
         
         samplesRead += samplesToRead;
     }
+}
+
+StringArray FileReader::getSupportedExtensions() const
+{
+	StringArray extensions;
+	HashMap<String, int>::Iterator i(supportedExtensions);
+	while (i.next())
+	{
+		extensions.add(i.getKey());
+	}
+	return extensions;
+}
+
+//Built-In
+
+int FileReader::getNumBuiltInFileSources() const
+{
+	return 1;
+}
+
+String FileReader::getBuiltInFileSourceExtensions(int index) const
+{
+	switch (index)
+	{
+	case 0: //Binary
+		return "oebin";
+	default:
+		return "";
+	}
+}
+
+FileSource* FileReader::createBuiltInFileSource(int index) const
+{
+	switch (index)
+	{
+	case 0:
+		return new BinarySource::BinaryFileSource();
+	default:
+		return nullptr;
+	}
 }

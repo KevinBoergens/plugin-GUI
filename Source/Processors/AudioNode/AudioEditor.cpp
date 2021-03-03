@@ -24,8 +24,9 @@
 #include "AudioEditor.h"
 #include "../../Audio/AudioComponent.h"
 #include "../../AccessClass.h"
+#include "../../UI/EditorViewport.h"
 #include "../../UI/LookAndFeel/MaterialSliderLookAndFeel.h"
-
+#include "../../Utils/Utils.h"
 
 static const Colour COLOUR_SLIDER_TRACK         (Colour::fromRGB (92, 92, 92));
 static const Colour COLOUR_SLIDER_TRACK_FILL    (Colour::fromRGB (255, 255, 255));
@@ -114,6 +115,7 @@ AudioEditor::AudioEditor (AudioNode* owner)
     volumeSlider->setColour (Slider::thumbColourId,      COLOUR_SLIDER_TRACK_FILL);
     volumeSlider->setLookAndFeel (materialSliderLookAndFeel);
     volumeSlider->addListener (this);
+    volumeSlider->setValue(50);
     addAndMakeVisible (volumeSlider);
 
     noiseGateSlider = new Slider ("Noise Gate Slider");
@@ -160,7 +162,7 @@ void AudioEditor::resized()
 
 bool AudioEditor::keyPressed (const KeyPress& key)
 {
-    //std::cout << name << " received " << key.getKeyCode() << std::endl;
+    //LOGDD(name, " received ", key.getKeyCode());
     return false;
 }
 
@@ -203,12 +205,12 @@ void AudioEditor::buttonClicked (Button* button)
         {
             lastValue = volumeSlider->getValue();
             getAudioProcessor()->setParameter (1,0.0f);
-            std::cout << "Mute on." << std::endl;
+            LOGD("Mute on.");
         }
         else
         {
             getAudioProcessor()->setParameter (1,lastValue);
-            std::cout << "Mute off." << std::endl;
+            LOGD("Mute off.");
         }
     }
     else if (button == audioWindowButton && isEnabled)
@@ -219,6 +221,7 @@ void AudioEditor::buttonClicked (Button* button)
             {
                 audioConfigurationWindow = new AudioConfigurationWindow (AccessClass::getAudioComponent()->deviceManager,
                                                                          audioWindowButton);
+                audioConfigurationWindow->addComponentListener(this);
             }
 
             AccessClass::getAudioComponent()->restartDevice();
@@ -226,9 +229,7 @@ void AudioEditor::buttonClicked (Button* button)
         }
         else
         {
-            updateBufferSizeText();
             audioConfigurationWindow->setVisible (false);
-            AccessClass::getAudioComponent()->stopDevice();
         }
     }
 
@@ -243,6 +244,14 @@ void AudioEditor::sliderValueChanged (Slider* slider)
         getAudioProcessor()->setParameter (2, slider->getValue());
 }
 
+void AudioEditor::componentVisibilityChanged(Component& component)
+{
+    if (component.getName() == audioConfigurationWindow->getName() && !component.isVisible())
+    {
+        updateBufferSizeText();
+        AccessClass::getAudioComponent()->stopDevice();
+    }
+}
 
 void AudioEditor::paint (Graphics& g)
 {
@@ -290,7 +299,7 @@ AudioConfigurationWindow::AudioConfigurationWindow (AudioDeviceManager& adm, Aud
     setUsingNativeTitleBar (true);
     setResizable (false,false);
 
-    //std::cout << "Audio CPU usage:" << adm.getCpuUsage() << std::endl;
+    LOGDD("Audio CPU usage:", adm.getCpuUsage());
 
     AudioDeviceSelectorComponent* adsc = new AudioDeviceSelectorComponent
         (adm,
@@ -317,12 +326,10 @@ AudioConfigurationWindow::~AudioConfigurationWindow()
 
 void AudioConfigurationWindow::closeButtonPressed()
 {
-    controlButton->setToggleState (false, dontSendNotification);
+    File recoveryFile = CoreServices::getSavedStateDirectory().getChildFile("recoveryConfig.xml");
+    AccessClass::getEditorViewport()->saveState(recoveryFile);
 
-    String t = String (AccessClass::getAudioComponent()->getBufferSizeMs());
-    t += " ms";
-    controlButton->setText (t);
-    AccessClass::getAudioComponent()->stopDevice();
+    controlButton->setToggleState (false, dontSendNotification);
     setVisible (false);
 }
 

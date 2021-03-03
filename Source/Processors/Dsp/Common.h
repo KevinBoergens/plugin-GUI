@@ -57,10 +57,12 @@ THE SOFTWARE.
 #include <vector>
 
 #ifdef _MSC_VER
-namespace tr1 = std::tr1;
+namespace tr1 = std;
 #else
 namespace tr1 = std;
 #endif
 
+// for PLUGIN_API
+#include "../PluginManager/OpenEphysPlugin.h"
 
 #endif

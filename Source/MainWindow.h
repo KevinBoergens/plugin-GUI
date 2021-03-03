@@ -46,7 +46,7 @@ public:
 
     /** Initializes the MainWindow, creates the AudioComponent, ProcessorGraph,
         and UIComponent, and sets the window boundaries. */
-    MainWindow();
+    MainWindow(const File& fileToLoad = File());
 
     /** Destroys the AudioComponent, ProcessorGraph, and UIComponent, and saves the window boundaries. */
     ~MainWindow();
@@ -62,6 +62,8 @@ public:
     /** Determines whether the last used configuration reloads upon startup. */
     bool shouldReloadOnStartup;
 
+	void shutDownGUI();
+
 private:
 
     /** Saves the MainWindow's boundaries into the file "windowState.xml", located in the directory
@@ -71,6 +73,10 @@ private:
     /** Loads the MainWindow's boundaries into the file "windowState.xml", located in the directory
         from which the GUI is run. */
     void loadWindowBounds();
+
+    /** Checks whether the signal chains of both the config files (lastConfig.xml & recoveryConfig.xml) 
+     *  match or not. */
+    bool compareConfigFiles(File file1, File file2);
 
     /** A pointer to the application's AudioComponent (owned by the MainWindow). */
     ScopedPointer<AudioComponent> audioComponent;

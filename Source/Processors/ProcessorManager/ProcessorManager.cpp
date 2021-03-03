@@ -31,7 +31,7 @@
 #include "../FileReader/FileReader.h"
 #include "../Merger/Merger.h"
 #include "../Splitter/Splitter.h"
-#include "../DataThreads/RhythmNode/RHD2000Thread.h"
+#include "../RecordNode/RecordNode.h"
 
 #include "../PlaceholderProcessor/PlaceholderProcessor.h"
 
@@ -51,20 +51,20 @@ namespace ProcessorManager
 			type = UtilityProcessor;
 			break;
 		case 0:
-			name = "Rhythm FPGA";
-			type = SourceProcessor;
-			break;
-		case 1:
 			name = "Merger";
 			type = UtilityProcessor;
 			break;
-		case 2:
+		case 1:
 			name = "Splitter";
 			type = UtilityProcessor;
 			break;
-		case 3:
+		case 2:
 			name = "File Reader";
 			type = SourceProcessor;
+			break;
+		case 3:
+			name = "Record Node";
+			type = FilterProcessor;
 			break;
 		default:
 			name = String::empty;
@@ -83,16 +83,16 @@ namespace ProcessorManager
 			proc = new PlaceholderProcessor("Empty placeholder", "Undefined", 0, false, false);
 			break;
 		case 0:
-			proc = new SourceNode("Rhythm FPGA", &RHD2000Thread::createDataThread);
-			break;
-		case 1:
 			proc = new Merger();
 			break;
-		case 2:
+		case 1:
 			proc = new Splitter();
 			break;
-		case 3:
+		case 2:
 			proc = new FileReader();
+			break;
+		case 3:
+			proc = new RecordNode();
 			break;
 		default:
 			return nullptr;
